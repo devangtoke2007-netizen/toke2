@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ASL Live Translator</title>
+
+<!-- MediaPipe hand tracking -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+
+<style>
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background: #f1f5ff;
+  color: #172554;
+}
+header {
+  background: #273cbb;
+  color: white;
+  padding: 18px;
+  text-align: center;
+}
+header h1 { margin: 0; }
+nav {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 14px;
+  background: white;
+}
+button {
+  border: none;
+  border-radius: 8px;
+  padding: 11px 16px;
+  cursor: pointer;
+  font-weight: bold;
+  background: #354bd1;
+  color: white;
+}
+button:hover { opacity: .85; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+main { max-width: 1000px; margin: auto; padding: 18px; }
+.card {
+  background: white;
+  padding: 20px;
+  margin-bottom: 18px;
+  border-radius: 15px;
+  box-shadow: 0 4px 14px #1e3a8a12;
+}
+#login {
+  max-width: 400px;
+  margin: 60px auto;
+  text-align: center;
+}
+input {
+  width: 100%;
+  padding: 12px;
+  margin: 8px 0;
+  border: 1px solid #ccd3e6;
+  border-radius: 8px;
+}
+.camera-area {
+  position: relative;
+  width: 100%;
+  max-width: 640px;
+  margin: auto;
+  background: #111827;
+  border-radius: 12px;
+  overflow: hidden;
+  min-height: 240px;
+}
+video, canvas {
+  width: 100%;
+  display: block;
+  transform: scaleX(-1);
+}
+canvas {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+}
+#result {
+  font-size: 27px;
+  font-weight: bold;
+  color: #273cbb;
+  overflow-wrap: anywhere;
+}
+.status { color: #64748b; font-size: 14px; }
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(95px, 1fr));
+  gap: 10px;
+}
+.sign {
+  background: #eef2ff;
+  text-align: center;
+  padding: 14px 5px;
+  border-radius: 10px;
+}
+.sign strong { font-size: 23px; display: block; }
+.hidden { display: none !important; }
+footer { text-align: center; padding: 20px; color: #64748b; }
+</style>
+</head>
+
+<body>
+<header>
+  <h1>🤟 ASL Live Translator</h1>
+  <p>American Sign Language to Text and Voice</p>
+</header>
+
+<!-- LOGIN PAGE -->
+<section id="login" class="card">
+  <h2>Welcome!</h2>
+  <p>Sign in to open the translator</p>
+  <input id="username" type="text" placeholder="Enter your name">
+  <input id="password" type="password" placeholder="Enter any demo password">
+  <button onclick="login()">Login</button>
+  <p class="status">Demo login only. No account is created.</p>
+</section>
+
+<!-- MAIN PAGE -->
+<section id="app" class="hidden">
+  <nav>
+    <button onclick="showPage('translator')">Live Translator</button>
+    <button onclick="showPage('alphabet')">ASL Alphabet</button>
+    <button onclick="showPage('common')">Common Signs</button>
+    <button onclick="logout()">Logout</button>
+  </nav>
+
+  <main>
+    <section id="translator" class="page">
+      <div class="card">
+        <h2>📷 Live Camera Translation</h2>
+        <p>Allow camera access and show one hand clearly in front of the camera.</p>
+
+        <div class="camera-area">
+          <video id="video" autoplay playsinline muted></video>
+          <canvas id="overlay"></canvas>
+        </div>
+
+        <p id="status" class="status">Camera is stopped.</p>
+        <button id="startBtn" onclick="startCamera()">Start Camera</button>
+        <button id="stopBtn" onclick="stopCamera()" disabled>Stop Camera</button>
+      </div>
+
+      <div class="card">
+        <h2>📝 Detected Sign</h2>
+        <p id="result" aria-live="polite">No sign detected</p>
+        <p id="confidence" class="status">
+          Waiting for a hand...
+        </p>
+        <button onclick="speakText()">🔊 Speak Text</button>
+        <button onclick="clearText()">Clear Text</button>
+        <button onclick="addWord()">Add to Sentence</button>
+        <h3>Translated Sentence</h3>
+        <p id="sentence">Your translated sentence will appear here.</p>
+      </div>
+
+      <div class="card">
+        <h3>Supported demo gestures</h3>
+        <ul>
+          <li>Open palm: Hello (demo gesture)</li>
+          <li>Closed fist: Fist detected</li>
+          <li>Thumbs up: Thumbs-up gesture</li>
+          <li>Index, middle, and little finger raised with thumb: I love you (approximate gesture)</li>
+        </ul>
+        <p class="status">
+          These are basic gesture heuristics, not a complete ASL translation model.
+          A gesture label does not always mean the same thing in ASL.
+        </p>
+      </div>
+    </section>
+
+    <section id="alphabet" class="page hidden">
+      <div class="card">
+        <h2>🔤 ASL Alphabet A–Z</h2>
+        <p>
+          Use this reference to learn the letters. These are letter names,
+          not live letter recognition.
+        </p>
+        <div id="letters" class="grid"></div>
+        <p class="status">
+          Most ASL letters use hand shapes. J and Z also involve movement.
+          Actual sign illustrations should be added for visual learning.
+        </p>
+      </div>
+    </section>
+
+    <section id="common" class="page hidden">
+      <div class="card">
+        <h2>🤟 Common ASL Sign Reference</h2>
+        <div class="grid">
+          <div class="sign"><strong>👋</strong>Hello</div>
+          <div class="sign"><strong>🤟</strong>I love you</div>
+          <div class="sign"><strong>👍</strong>Thumbs up</div>
+          <div class="sign"><strong>✋</strong>Open palm</div>
+          <div class="sign"><strong>✊</strong>Closed fist</div>
+        </div>
+        <p class="status">
+          Emoji are illustrative only, not authoritative ASL instructions.
+          Emergency signs should be learned from qualified ASL resources.
+        </p>
+      </div>
+    </section>
+  </main>
+</section>
+
+<footer>ASL Live Translator · Educational prototype</footer>
+
+<script>
+const loginPage = document.getElementById("login");
+const appPage = document.getElementById("app");
+const video = document.getElementById("video");
+const canvas = document.getElementById("overlay");
+const ctx = canvas.getContext("2d");
+
+let camera = null;
+let stream = null;
+let hands = null;
+let currentSign = "";
+let sentence = [];
+let lastSign = "";
+let stableFrames = 0;
+let lastAdded = "";
+
+function login() {
+  const name = document.getElementById("username").value.trim();
+  const password = document.getElementById("password").value;
+
+  if (!name || !password) {
+    alert("Please enter your name and demo password.");
+    return;
+  }
+
+  loginPage.classList.add("hidden");
+  appPage.classList.remove("hidden");
+}
+
+function logout() {
+  stopCamera();
+  appPage.classList.add("hidden");
+  loginPage.classList.remove("hidden");
+}
+
+function showPage(pageId) {
+  document.querySelectorAll(".page").forEach(p => p.classList.add("hidden"));
+  document.getElementById(pageId).classList.remove("hidden");
+}
+
+const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+document.getElementById("letters").innerHTML =
+  [...letters].map(letter =>
+    `<div class="sign"><strong>${letter}</strong>ASL letter</div>`
+  ).join("");
+
+function setStatus(message) {
+  document.getElementById("status").textContent = message;
+}
+
+async function startCamera() {
+  if (typeof Hands === "undefined" ||
+      typeof Camera === "undefined") {
+    setStatus("Could not load hand-tracking library. Check your internet connection.");
+    return;
+  }
+
+  try {
+    setStatus("Requesting camera permission...");
+
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "user", width: 640, height: 480 },
+      audio: false
+    });
+
+    video.srcObject = stream;
+    await video.play();
+
+    hands = new Hands({
+      locateFile: file =>
+        `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+      maxNumHands: 2,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.65,
+      minTrackingConfidence: 0.6
+    });
+
+    hands.onResults(onResults);
+
+    camera = new Camera(video, {
+      onFrame: async () => {
+        if (hands && video.readyState >= 2) {
+          await hands.send({ image: video });
+        }
+      },
+      width: 640,
+      height: 480
+    });
+
+    camera.start();
+
+    document.getElementById("startBtn").disabled = true;
+    document.getElementById("stopBtn").disabled = false;
+    setStatus("Camera active. Show your hand clearly.");
+  } catch (error) {
+    console.error(error);
+    stopCamera();
+    setStatus("Camera error: allow permission and use HTTPS or localhost.");
+  }
+}
+
+function stopCamera() {
+  if (camera) {
+    try { camera.stop(); } catch (e) {}
+    camera = null;
+  }
+
+  if (stream) {
+    stream.getTracks().forEach(track => track.stop());
+    stream = null;
+  }
+
+  video.srcObject = null;
+  if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  document.getElementById("startBtn").disabled = false;
+  document.getElementById("stopBtn").disabled = true;
+  setStatus("Camera is stopped.");
+}
+
+function onResults(results) {
+  canvas.width = video.videoWidth || 640;
+  canvas.height = video.videoHeight || 480;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (!results.multiHandLandmarks ||
+      results.multiHandLandmarks.length === 0) {
+    currentSign = "";
+    stableFrames = 0;
+    document.getElementById("result").textContent = "No hand detected";
+    document.getElementById("confidence").textContent =
+      "Keep your hand inside the camera frame.";
+    return;
+  }
+
+  const landmarks = results.multiHandLandmarks[0];
+
+  drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {
+    color: "#00e5ff", lineWidth: 3
+  });
+
+  drawLandmarks(ctx, landmarks, {
+    color: "#ff4081", lineWidth: 1, radius: 3
+  });
+
+  const sign = classifyDemoGesture(landmarks);
+
+  if (sign === lastSign) {
+    stableFrames++;
+  } else {
+    lastSign = sign;
+    stableFrames = 1;
+  }
+
+  if (stableFrames >= 8 && sign) {
+    currentSign = sign;
+  } else {
+    currentSign = "";
+  }
+
+  document.getElementById("result").textContent =
+    currentSign || "Checking hand position...";
+
+  document.getElementById("confidence").textContent =
+    "Demo gesture estimate — not a verified ASL translation.";
+}
+
+/*
+ MediaPipe hand landmarks:
+ wrist=0
+ thumb tip=4
+ index tip=8
+ middle tip=12
+ ring tip=16
+ little tip=20
+
+ This basic heuristic is approximate and may fail depending on
+ camera angle, left/right hand, and hand orientation.
+*/
+function classifyDemoGesture(lm) {
+  const wrist = lm[0];
+
+  // Compare fingertip distance to its lower joint.
+  const indexUp = lm[8].y < lm[6].y;
+  const middleUp = lm[12].y < lm[10].y;
+  const ringUp = lm[16].y < lm[14].y;
+  const littleUp = lm[20].y < lm[18].y;
+
+  // Approximate thumb extension using landmark distance.
+  const thumbExtended =
+    Math.hypot(lm[4].x - lm[2].x, lm[4].y - lm[2].y) >
+    Math.hypot(lm[3].x - lm[2].x, lm[3].y - lm[2].y) * 1.15;
+
+  if (indexUp && middleUp && !ringUp && littleUp && thumbExtended) {
+    return "I love you (approximate gesture)";
+  }
+
+  if (indexUp && middleUp && ringUp && littleUp) {
+    return "Hello (open-palm demo)";
+  }
+
+  if (!indexUp && !middleUp && !ringUp && !littleUp) {
+    if (lm[4].y < lm[3].y && lm[4].y < wrist.y) {
+      return "Thumbs up (approximate)";
+    }
+    return "Closed fist";
+  }
+
+  return "Hand detected — sign not recognized";
+}
+
+function speakText() {
+  const text = sentence.length
+    ? sentence.join(" ")
+    : currentSign;
+
+  if (!text) {
+    alert("Show a hand and wait for a demo gesture to be detected.");
+    return;
+  }
+
+  if (!("speechSynthesis" in window)) {
+    alert("Text-to-speech is not supported by this browser.");
+    return;
+  }
+
+  speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = "en-US";
+  speechSynthesis.speak(utterance);
+}
+
+function addWord() {
+  if (!currentSign ||
+      currentSign.startsWith("Hand detected")) {
+    alert("Wait until a demo gesture label appears.");
+    return;
+  }
+
+  sentence.push(currentSign);
+  document.getElementById("sentence").textContent =
+    sentence.join(" ");
+  lastAdded = currentSign;
+}
+
+function clearText() {
+  sentence = [];
+  currentSign = "";
+  lastAdded = "";
+  document.getElementById("sentence").textContent =
+    "Your translated sentence will appear here.";
+  document.getElementById("result").textContent =
+    "No sign detected";
+  document.getElementById("confidence").textContent =
+    "Waiting for a hand...";
+}
+
+window.addEventListener("pagehide", stopCamera);
+</script>
+</body>
+</html>
